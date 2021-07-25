@@ -1,4 +1,5 @@
-# version 0.0.1
+# version 0.1
+
 FROM ubuntu:20.04
 
 ENV USER=user
@@ -13,26 +14,38 @@ RUN mkdir ${HOME} \
 	&& usermod -aG wheel ${USER} \
 	&& echo "%wheel ALL=(ALL) ALL" >> /etc/sudoers
 
-RUN DEBIAN_FRONTEND=noninteractive apt install tigervnc-standalone-server tigervnc-common xfce4 xfce4-terminal expect -y \
-	&& apt clean
+RUN DEBIAN_FRONTEND=noninteractive apt install tigervnc-standalone-server tigervnc-common xfce4 xfce4-terminal expect vim mc net-tools htop git -qqy \
+	&& apt clean \
+	&& rm -rf /var/lib/apt/lists/*
 
 RUN touch ${HOME}/.Xauthority \
-	&& echo "allowed_users = anybody" > /etc/X11/Xwrapper.config
+	&& printf "allowed_users = anybody" > /etc/X11/Xwrapper.config
 
-RUN mkdir -p ${HOME}/.vnc \
-	&& echo '#!/bin/sh' > ${HOME}/.vnc/xstartup \
-	&& echo 'exec startxfce4' >> ${HOME}/.vnc/xstartup \
+RUN mkdir -p ${HOME}/.vnc && printf '#!/bin/sh\n \
+	exec startxfce4' >> ${HOME}/.vnc/xstartup \
 	&& chmod 775 ${HOME}/.vnc/xstartup \
 	&& chown ${USER} -R ${HOME}
 
-RUN echo '#!/usr/bin/expect' > ${HOME}/startup.sh \
-	&& echo 'spawn /usr/bin/vncserver -localhost no :1 -geometry 1920x1080 -fg' >> ${HOME}/startup.sh \
-	&& echo 'expect "Password:"; send "$env(password)\r"' >> ${HOME}/startup.sh \
-	&& echo 'expect "Verify:"; send "$env(password)\r"' >> ${HOME}/startup.sh \
-	&& echo 'expect "Would you like to enter a view-only password (y/n)?"; send "n\r"' >> ${HOME}/startup.sh \
-	&& echo 'set timeout -1; expect eof' >> ${HOME}/startup.sh \
+RUN cd ${HOME} && git clone https://github.com/novnc/noVNC.git \
+	&& cd noVNC/utils && git clone https://github.com/novnc/websockify.git
+
+RUN printf '#!/usr/bin/expect\n \
+	spawn /usr/bin/vncserver -localhost no :1 -geometry 1920x1080 -fg\n \
+	expect "Password:"; send "$env(password)\r"\n \
+	expect "Verify:"; send "$env(password)\r"\n \
+	expect "Would you like to enter a view-only password (y/n)?"; send "n\r"\n \
+	set timeout -1; expect eof\n' >> ${HOME}/startup.sh \
 	&& chmod 775 ${HOME}/startup.sh
+
+RUN printf '#!/bin/bash\n \
+	/etc/update-motd.d/00-header\n \
+	echo "VNC Workstation start, connect via VNC: locahost:5901"\n \
+	expect ./startup.sh > /dev/null &\n \
+	echo "Open in browser: http://$(hostname -I | xargs):6080/vnc.html?host=$(hostname -I | xargs)&port=6080"\n \
+	echo "============"\n \
+	~/noVNC/utils/novnc_proxy --vnc localhost:5901 >> /dev/null\n' >> ${HOME}/entrypoint.sh \
+	&& chmod 775 ${HOME}/entrypoint.sh
 
 WORKDIR ${HOME}
 USER ${USER}
-ENTRYPOINT ["expect", "./startup.sh"]
+ENTRYPOINT ./entrypoint.sh
